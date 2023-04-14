@@ -26,7 +26,7 @@ import (
 	"github.com/vbauerster/mpb/v7/decor"
 )
 
-var env_prefixes = [...] string {"OSG", "OSDF"}
+var env_prefixes = [...]string{"OSG", "OSDF"}
 
 var p = mpb.New()
 
@@ -224,7 +224,16 @@ func download_http(source string, destination string, payload *payloadStruct, na
 		}
 	}
 
-	closestNamespaceCaches, err := GetCachesFromNamespace(namespace)
+	// Check the env var "USE_OSDF_DIRECTOR" and decide if ordered caches should come from director
+	OSDFDirectorUrl, useOSDFDirector := os.LookupEnv("OSDF_DIRECTOR_URL")
+	var closestNamespaceCaches []Cache
+	if useOSDFDirector {
+		log.Debugln("Using OSDF Director at ", OSDFDirectorUrl)
+		closestNamespaceCaches, err = GetCachesFromDirector(source, OSDFDirectorUrl)
+	} else {
+		closestNamespaceCaches, err = GetCachesFromNamespace(namespace)
+	}
+
 	if err != nil {
 		log.Errorln("Failed to get namespaced caches (treated as non-fatal):", err)
 	}
@@ -330,7 +339,7 @@ func startDownloadWorker(source string, destination string, token string, transf
 				errorString := "Failed to download from " + transfer.Url.Hostname() + ":" +
 					transfer.Url.Port() + " "
 				if errors.As(err, &ope) && ope.Op == "proxyconnect" {
-					log.Debugln(ope);
+					log.Debugln(ope)
 					AddrString, _ := os.LookupEnv("http_proxy")
 					if ope.Addr != nil {
 						AddrString = " " + ope.Addr.String()
@@ -554,8 +563,8 @@ Loop:
 		log.Debugln("Got error from HTTP download", err)
 		return 0, err
 	}
-        // Valid responses include 200 and 206.  The latter occurs if the download was resumed after a
-        // prior attempt.
+	// Valid responses include 200 and 206.  The latter occurs if the download was resumed after a
+	// prior attempt.
 	if resp.HTTPResponse.StatusCode != 200 && resp.HTTPResponse.StatusCode != 206 {
 		log.Debugln("Got failure status code:", resp.HTTPResponse.StatusCode)
 		return 0, errors.New("failure status code")

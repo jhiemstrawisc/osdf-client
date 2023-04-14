@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -85,8 +86,56 @@ func doWriteBack(source string, destination *url.URL, namespace Namespace) (int6
 	if err != nil {
 		return 0, err
 	}
+	fmt.Println("right before UploadFile, source:", source, "destination:", destination, "st:", scitoken_contents, "namespace", namespace)
+	fmt.Println()
 	return UploadFile(source, destination, scitoken_contents, namespace)
 
+}
+
+func doWriteBackWithDirector(file_path string, dest_url *url.URL, OSDFDirectorUrl string) {
+	// First, ping the Director with the full resource URL (eg <director_url>/ospool/protected/my.files/a.file.txt),
+	// indicating PUT to tell it we want writeback
+
+	fmt.Println("in DWBWD, destination:", dest_url.Path)
+
+	fmt.Println()
+	resourceUrl, _ := url.JoinPath(OSDFDirectorUrl, dest_url.Path)
+	fmt.Println("Trying to parse", resourceUrl)
+	fmt.Println()
+
+	// Now we want to ping the Director with "Put" method to tell it we want writeback
+
+	// Prevent following the Director's redirect
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	log.Debugln("Querying OSDF Director at", resourceUrl)
+	resp, err := client.Get(resourceUrl)
+	log.Debugln("Director's response:", resp)
+
+	if err != nil {
+		log.Errorln("Failed to get response from OSDF Director:", err)
+		return
+	}
+
+	// A non 307 response status code probably indicates something is wrong with the director
+	if resp.StatusCode != 307 {
+		err_str := "Unexpected response from Director: " + strconv.Itoa(resp.StatusCode) + ". Either the Director isn't working properly, or the requested namespace doesn't exist (404)"
+		err = errors.New(err_str)
+		return
+	}
+
+	// fmt.Println("in doWriteBackWithDirector, dest_path:", dest_path)
+
+	// resourceUrl := OSDFDirectorUrl + "/" + dest_path
+	// fmt.Println(resourceUrl)
+
+	// eg, source: "localfile.txt", dest_path: "/ospool/PROTECTED/my.files/remotefile.txt"
+	//UploadFileWithDirector(source, dest_path, scitoken_contents)
+	fmt.Println("foooooooooooo")
 }
 
 func getToken(destination *url.URL, namespace Namespace, isWrite bool) (string, error) {
@@ -311,7 +360,21 @@ func DoStashCPSingle(sourceFile string, destination string, methods []string, re
 		if err != nil {
 			log.Errorln("Failed to get namespace information:", err)
 		}
-		return doWriteBack(source_url.Path, dest_url, ns)
+
+		fmt.Println("right before 'doWriteBack', source_url.Path:", source_url.Path, "dest_url.Path:", dest_url.Path, "ns:", ns)
+		fmt.Println("destination:", destination)
+		fmt.Println()
+
+		OSDFDirectorUrl, useOSDFDirector := os.LookupEnv("OSDF_DIRECTOR_URL")
+		if useOSDFDirector {
+			log.Debugln("Performing writeback using OSDF Director at ", OSDFDirectorUrl)
+
+			doWriteBackWithDirector(source_url.Path, dest_url, OSDFDirectorUrl) // Let this func do the parsing
+
+			return doWriteBack(source_url.Path, dest_url, ns)
+		} else {
+			return doWriteBack(source_url.Path, dest_url, ns)
+		}
 	}
 
 	if dest_url.Scheme == "file" {
