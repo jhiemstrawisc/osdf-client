@@ -26,7 +26,7 @@ import (
 	"github.com/vbauerster/mpb/v7/decor"
 )
 
-var env_prefixes = [...] string {"OSG", "OSDF"}
+var env_prefixes = [...]string{"OSG", "OSDF"}
 
 var p = mpb.New()
 
@@ -197,7 +197,7 @@ type TransferResults struct {
 	Downloaded int64
 }
 
-func download_http(source string, destination string, payload *payloadStruct, namespace Namespace, recursive bool, tokenName string) (bytesTransferred int64, err error) {
+func download_http(source string, destination string, payload *payloadStruct, namespace Namespace, recursive bool, tokenName string, OSDFDirectorUrl string) (bytesTransferred int64, err error) {
 
 	// First, create a handler for any panics that occur
 	defer func() {
@@ -225,47 +225,114 @@ func download_http(source string, destination string, payload *payloadStruct, na
 	}
 
 	// Check the env var "USE_OSDF_DIRECTOR" and decide if ordered caches should come from director
-	OSDFDirectorUrl, useOSDFDirector := os.LookupEnv("OSDF_DIRECTOR_URL")
-	var closestNamespaceCaches []Cache
-	if useOSDFDirector {
-		log.Debugln("Using OSDF Director at ", OSDFDirectorUrl)
-		closestNamespaceCaches, err = GetCachesFromDirector(source, OSDFDirectorUrl)
-	} else {
-		closestNamespaceCaches, err = GetCachesFromNamespace(namespace)
-	}
-
-	if err != nil {
-		log.Errorln("Failed to get namespaced caches (treated as non-fatal):", err)
-	}
-	log.Debugln("Matched caches:", closestNamespaceCaches)
-
-	// Make sure we only try as many caches as we have
-	cachesToTry := CachesToTry
-	if cachesToTry > len(closestNamespaceCaches) {
-		cachesToTry = len(closestNamespaceCaches)
-	}
-	log.Debugln("Trying the caches:", closestNamespaceCaches[:cachesToTry])
+	//var closestNamespaceCaches []Cache
 	var transfers []TransferDetails
-	downloadUrl := url.URL{Path: source}
 	var files []string
+	if OSDFDirectorUrl != "" {
+		log.Debugln("Using OSDF Director at ", OSDFDirectorUrl)
+		var closestNamespaceCaches []DirectorCache
+		closestNamespaceCaches = namespace.SortedDirectorCaches
 
-	if recursive {
-		var err error
-		files, err = walkDavDir(&downloadUrl, token, namespace)
-		if err != nil {
-			log.Errorln("Error from walkDavDir", err)
-			return 0, err
+		log.Debugln("Matched caches:", closestNamespaceCaches)
+
+		// Make sure we only try as many caches as we have
+		cachesToTry := CachesToTry
+		if cachesToTry > len(closestNamespaceCaches) {
+			cachesToTry = len(closestNamespaceCaches)
+		}
+		log.Debugln("Trying the caches:", closestNamespaceCaches[:cachesToTry])
+		downloadUrl := url.URL{Path: source}
+
+		if recursive {
+			var err error
+			files, err = walkDavDir(&downloadUrl, token, namespace)
+			if err != nil {
+				log.Errorln("Error from walkDavDir", err)
+				return 0, err
+			}
+		} else {
+			files = append(files, source)
+		}
+
+		// Generate all of the transfer details to make a list of transfers
+		for _, cache := range closestNamespaceCaches[:cachesToTry] {
+			// Parse the cache URL
+			log.Debugln("Cache:", cache)
+			transfers = append(transfers, NewTransferDetailsUsingDirector(cache, namespace.ReadHTTPS || namespace.UseTokenOnRead)...)
 		}
 	} else {
-		files = append(files, source)
+		var closestNamespaceCaches []Cache
+		closestNamespaceCaches, err := GetCachesFromNamespace(namespace)
+
+		if err != nil {
+			log.Errorln("Failed to get namespaced caches (treated as non-fatal):", err)
+		}
+		log.Debugln("Matched caches:", closestNamespaceCaches)
+
+		// Make sure we only try as many caches as we have
+		cachesToTry := CachesToTry
+		if cachesToTry > len(closestNamespaceCaches) {
+			cachesToTry = len(closestNamespaceCaches)
+		}
+		log.Debugln("Trying the caches:", closestNamespaceCaches[:cachesToTry])
+		downloadUrl := url.URL{Path: source}
+
+		if recursive {
+			var err error
+			files, err = walkDavDir(&downloadUrl, token, namespace)
+			if err != nil {
+				log.Errorln("Error from walkDavDir", err)
+				return 0, err
+			}
+		} else {
+			files = append(files, source)
+		}
+
+		// Generate all of the transfer details to make a list of transfers
+		for _, cache := range closestNamespaceCaches[:cachesToTry] {
+			// Parse the cache URL
+			log.Debugln("Cache:", cache)
+			transfers = append(transfers, NewTransferDetails(cache, namespace.ReadHTTPS || namespace.UseTokenOnRead)...)
+		}
 	}
 
-	// Generate all of the transfer details to make a list of transfers
-	for _, cache := range closestNamespaceCaches[:cachesToTry] {
-		// Parse the cache URL
-		log.Debugln("Cache:", cache)
-		transfers = append(transfers, NewTransferDetails(cache, namespace.ReadHTTPS || namespace.UseTokenOnRead)...)
-	}
+	// if err != nil {
+	// 	log.Errorln("Failed to get namespaced caches (treated as non-fatal):", err)
+	// }
+	// log.Debugln("Matched caches:", closestNamespaceCaches)
+
+	// // Make sure we only try as many caches as we have
+	// cachesToTry := CachesToTry
+	// if cachesToTry > len(closestNamespaceCaches) {
+	// 	cachesToTry = len(closestNamespaceCaches)
+	// }
+	// log.Debugln("Trying the caches:", closestNamespaceCaches[:cachesToTry])
+	// var transfers []TransferDetails
+	// downloadUrl := url.URL{Path: source}
+	// var files []string
+
+	// if recursive {
+	// 	var err error
+	// 	files, err = walkDavDir(&downloadUrl, token, namespace)
+	// 	if err != nil {
+	// 		log.Errorln("Error from walkDavDir", err)
+	// 		return 0, err
+	// 	}
+	// } else {
+	// 	files = append(files, source)
+	// }
+
+	// // Generate all of the transfer details to make a list of transfers
+	// for _, cache := range closestNamespaceCaches[:cachesToTry] {
+	// 	// Parse the cache URL
+	// 	log.Debugln("Cache:", cache)
+
+	// 	if useOSDFDirector {
+	// 		transfers = append(transfers, NewTransferDetailsUsingDirector(cache, namespace.ReadHTTPS || namespace.UseTokenOnRead)...)
+	// 	}
+
+	// 	transfers = append(transfers, NewTransferDetails(cache, namespace.ReadHTTPS || namespace.UseTokenOnRead)...)
+	// }
 	if len(transfers) > 0 {
 		log.Debugln("Transfers:", transfers[0].Url.Opaque)
 	} else {
@@ -563,8 +630,8 @@ Loop:
 		log.Debugln("Got error from HTTP download", err)
 		return 0, err
 	}
-        // Valid responses include 200 and 206.  The latter occurs if the download was resumed after a
-        // prior attempt.
+	// Valid responses include 200 and 206.  The latter occurs if the download was resumed after a
+	// prior attempt.
 	if resp.HTTPResponse.StatusCode != 200 && resp.HTTPResponse.StatusCode != 206 {
 		log.Debugln("Got failure status code:", resp.HTTPResponse.StatusCode)
 		return 0, errors.New("failure status code")
